@@ -32,7 +32,7 @@
 // CONFIGURATION
 // ============================================================================
 
-#define BUZZER_PIN 3
+#define BUZZER_PIN 1   // GPIO 1 — safe on ESP32-S3 Super Mini (GPIO 3 is a strapping pin, avoid)
 
 // Audio
 #define LOW_FREQ 200
@@ -51,8 +51,8 @@ static unsigned long fyBleScanInterval = 3000; // ms between scans
 #define MAX_DETECTIONS 200
 
 // WiFi AP credentials
-#define FY_AP_SSID "flockyou"
-#define FY_AP_PASS "flockyou123"
+#define FY_AP_SSID "flockyouMini"
+#define FY_AP_PASS "Superflockyou123"
 
 // ============================================================================
 // DETECTION PATTERNS
@@ -155,6 +155,18 @@ static SemaphoreHandle_t fyMutex = NULL;
 // ============================================================================
 
 static bool fyBuzzerOn = true;
+
+// ── Audio task queue ──────────────────────────────────────────────────────────
+// fyCaw() / delay() must NEVER run inside a BLE callback — the NimBLE task
+// has a strict watchdog. Instead the BLE callback posts an audio command to
+// this queue and returns immediately; the dedicated audio task consumes it.
+enum FYAudioCmd : uint8_t {
+    AUDIO_BOOT      = 0,
+    AUDIO_DETECT    = 1,
+    AUDIO_HEARTBEAT = 2,
+};
+static QueueHandle_t fyAudioQueue = NULL;
+
 static unsigned long fyLastBleScan = 0;
 static bool fyTriggered = false;
 static bool fyDeviceInRange = false;
@@ -225,47 +237,72 @@ static void fyCaw(int startFreq, int endFreq, int durationMs, int warbleHz) {
 }
 
 static void fyBootBeep() {
-    printf("[FLOCK-YOU] Boot sound (buzzer %s)\n", fyBuzzerOn ? "ON" : "OFF");
-    if (!fyBuzzerOn) return;
-
-    // === CROW CALL SEQUENCE ===
-    // Caw 1: sharp descending caw
-    fyCaw(850, 380, 180, 40);
-    delay(100);
-
-    // Caw 2: slightly lower, shorter
-    fyCaw(780, 350, 150, 50);
-    delay(100);
-
-    // Caw 3: longer trailing caw with more rasp
-    fyCaw(820, 280, 220, 60);
-    delay(80);
-
-    // Quick staccato ending "kk-kk"
-    tone(BUZZER_PIN, 600, 25); delay(40);
-    tone(BUZZER_PIN, 550, 25); delay(40);
-    noTone(BUZZER_PIN);
-
-    printf("[FLOCK-YOU] *caw caw caw*\n");
+    printf("[FLOCK-YOU] Boot sound queued (buzzer %s)\n", fyBuzzerOn ? "ON" : "OFF");
+    if (!fyAudioQueue) return;
+    FYAudioCmd cmd = AUDIO_BOOT;
+    xQueueSend(fyAudioQueue, &cmd, 0);
 }
 
+// Internal: actual blocking audio — only called from the audio task.
+static void fyDetectBeepBlocking() {
+    if (!fyBuzzerOn) return;
+    fyCaw(400, 900, 100, 30);
+    delay(60);
+    fyCaw(450, 950, 100, 30);
+    delay(60);
+    fyCaw(900, 350, 200, 50);
+}
+
+// Safe to call from BLE callback — posts to queue, returns instantly.
 static void fyDetectBeep() {
     printf("[FLOCK-YOU] Detection alert!\n");
-    if (!fyBuzzerOn) return;
-    // Alarm crow: two sharp ascending chirps then a caw
-    fyCaw(400, 900, 100, 30);   // rising alarm chirp
-    delay(60);
-    fyCaw(450, 950, 100, 30);   // second chirp, higher
-    delay(60);
-    fyCaw(900, 350, 200, 50);   // descending caw
+    if (!fyAudioQueue) return;
+    FYAudioCmd cmd = AUDIO_DETECT;
+    xQueueSend(fyAudioQueue, &cmd, 0);  // non-blocking; drop if queue full
 }
 
-static void fyHeartbeat() {
+static void fyHeartbeatBlocking() {
     if (!fyBuzzerOn) return;
-    // Soft double coo - like a distant crow
     fyCaw(500, 400, 80, 20);
     delay(120);
     fyCaw(480, 380, 80, 20);
+}
+
+static void fyHeartbeat() {
+    if (!fyAudioQueue) return;
+    FYAudioCmd cmd = AUDIO_HEARTBEAT;
+    xQueueSend(fyAudioQueue, &cmd, 0);
+}
+
+// ── Audio task ────────────────────────────────────────────────────────────────
+// Runs on Core 1 at low priority. Blocks on the queue — zero CPU when idle.
+// All blocking audio (delay-heavy fyCaw loops) happens here, safely away from
+// the BLE stack and the interrupt watchdog on Core 0.
+static void fyAudioTask(void* /*arg*/) {
+    FYAudioCmd cmd;
+    for (;;) {
+        if (xQueueReceive(fyAudioQueue, &cmd, portMAX_DELAY) == pdTRUE) {
+            switch (cmd) {
+                case AUDIO_BOOT:
+                    // Boot crow sequence (called once from setup via queue)
+                    if (!fyBuzzerOn) break;
+                    fyCaw(850, 380, 180, 40); delay(100);
+                    fyCaw(780, 350, 150, 50); delay(100);
+                    fyCaw(820, 280, 220, 60); delay(80);
+                    tone(BUZZER_PIN, 600, 25); delay(40);
+                    tone(BUZZER_PIN, 550, 25); delay(40);
+                    noTone(BUZZER_PIN);
+                    printf("[FLOCK-YOU] *caw caw caw*\n");
+                    break;
+                case AUDIO_DETECT:
+                    fyDetectBeepBlocking();
+                    break;
+                case AUDIO_HEARTBEAT:
+                    fyHeartbeatBlocking();
+                    break;
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -1036,7 +1073,7 @@ static void fySetupServer() {
             int placed = 0;
             for (JsonObject d : doc.as<JsonArray>()) {
                 JsonObject gps = d["gps"];
-                if (!gps || !gps.containsKey("lat")) continue;
+                if (!gps || !gps["lat"].is<double>()) continue;
                 bool isRaven = d["raven"] | false;
                 resp->printf("<Placemark><name>%s</name>\n", d["mac"] | "?");
                 resp->printf("<styleUrl>#%s</styleUrl>\n", isRaven ? "raven" : "det");
@@ -1094,6 +1131,18 @@ void setup() {
     digitalWrite(BUZZER_PIN, LOW);
 
     fyMutex = xSemaphoreCreateMutex();
+
+    // Audio task — keeps all delay()-heavy audio off the BLE/main stack
+    fyAudioQueue = xQueueCreate(4, sizeof(FYAudioCmd));
+    xTaskCreatePinnedToCore(
+        fyAudioTask,   // task function
+        "fy_audio",    // name
+        2048,          // stack (bytes)
+        NULL,          // arg
+        1,             // priority (low)
+        NULL,          // handle
+        1              // core 1 — keep Core 0 free for BLE/WiFi
+    );
 
     // Init SPIFFS for session persistence
     if (SPIFFS.begin(true)) {

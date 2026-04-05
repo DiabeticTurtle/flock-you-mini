@@ -16,6 +16,12 @@ No WiFi sniffing — the radio is dedicated to serving the dashboard AP while BL
 
 ---
 
+
+---
+
+## anntenna modification
+ - https://peterneufeld.wordpress.com/2025/03/04/esp32-c3-supermini-antenna-modification/
+---
 ## Detection Methods
 
 All detection is BLE-based:

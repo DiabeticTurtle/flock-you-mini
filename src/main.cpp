@@ -154,7 +154,7 @@ static SemaphoreHandle_t fyMutex = NULL;
 // GLOBALS
 // ============================================================================
 
-static bool fyBuzzerOn = true;
+static bool fyBuzzerOn = false;
 
 // ── Audio task queue ──────────────────────────────────────────────────────────
 // fyCaw() / delay() must NEVER run inside a BLE callback — the NimBLE task
@@ -1124,11 +1124,9 @@ void setup() {
     Serial.begin(115200);
     delay(500);
 
-    // Standalone mode: buzzer always on by default
-    fyBuzzerOn = true;
-
-    pinMode(BUZZER_PIN, OUTPUT);
-    digitalWrite(BUZZER_PIN, LOW);
+    
+    fyBuzzerOn = false;
+    // BUZZER_PIN left unconfigured (no pinMode) — floating GPIO won't be driven
 
     fyMutex = xSemaphoreCreateMutex();
 
@@ -1137,7 +1135,7 @@ void setup() {
     xTaskCreatePinnedToCore(
         fyAudioTask,   // task function
         "fy_audio",    // name
-        2048,          // stack (bytes)
+        6144,          // stack (bytes) — tone()/LEDC driver needs headroom; 2048 overflows
         NULL,          // arg
         1,             // priority (low)
         NULL,          // handle

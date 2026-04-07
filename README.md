@@ -1,8 +1,8 @@
 # Flock-You: Surveillance Device Detector
 ---
 
-## anntenna modification
-   for [esp32s3 super mini](https://www.espboards.dev/esp32/esp32-s3-super-mini/)
+## anntenna modification for [esp32s3 super mini](https://www.espboards.dev/esp32/esp32-s3-super-mini/)
+   
  - https://peterneufeld.wordpress.com/2025/03/04/esp32-c3-supermini-antenna-modification/
 ---
 ## Detection Methods

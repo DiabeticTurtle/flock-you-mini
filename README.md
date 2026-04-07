@@ -1,5 +1,11 @@
 # Flock-You: Surveillance Device Detector
+---
 
+## anntenna modification
+   for [esp32s3 super mini](https://www.espboards.dev/esp32/esp32-s3-super-mini/)
+ - https://peterneufeld.wordpress.com/2025/03/04/esp32-c3-supermini-antenna-modification/
+---
+## Detection Methods
 <img src="flock.png" alt="Flock You" width="300px">
 
 **Standalone BLE surveillance device detector with web dashboard, GPS wardriving, and session persistence.**
@@ -15,14 +21,6 @@ Flock-You detects Flock Safety surveillance cameras, Raven gunshot detectors, an
 No WiFi sniffing — the radio is dedicated to serving the dashboard AP while BLE scans continuously in the background via ESP32 coexistence.
 
 ---
-
-
----
-
-## anntenna modification
- - https://peterneufeld.wordpress.com/2025/03/04/esp32-c3-supermini-antenna-modification/
----
-## Detection Methods
 
 All detection is BLE-based:
 
